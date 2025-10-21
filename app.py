@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 
@@ -34,14 +33,16 @@ oem_brand_map = {
 }
 
 vehicle_map = {
-    "HB": ("BMW", "CAR"), "HW": ("VOLKSWAGEN", "CAR"), "HR": ("RENAULT", "TRUCK"), "HD": ("DAIMLER AG", "CAR"),
-    "HV": ("VOLVO", "TRUCK"), "HN": ("MAN", "TRUCK"), "HM": ("DAIMLER AG", "TRUCK"), "HS": ("SCANIA", "TRUCK"),
-    "HC": ("PORSCHE", "CAR"), "HT": ("TRAILER", "TRUCK"), "HI": ("IVECO", "TRUCK"), "HF": ("DAF", "TRUCK"),
-    "HL": ("LAND ROVER", "CAR"), "HZ": ("MISC", "TRUCK"), "JC": ("JAPANPARTS", "CAR"), "HE": ("DAIMLER AG", "TRUCK"),
-    "HY": ("JAGUAR", "CAR"), "HO": ("OPEL", "CAR"), "HU": ("RENAULT", "CAR"), "HX": ("DEUTZ", "TRUCK"),
-    "HK": ("VOLVO", "CAR"), "CC": ("EQUIPMENTS", "TRUCK"), "HP": ("PEUGEOT", "CAR"), "HA": ("AMERICAN PARTS", "CAR"),
-    "HJ": ("JEEP", "CAR"), "HH": ("HINO", "TRUCK"), "JV": ("MISC", "TRUCK"), "HQ": ("NISSAN UD", "TRUCK"),
-    "HG": ("TATA", "TRUCK")
+    "HB": ("BMW", "CAR"), "HW": ("VOLKSWAGEN", "CAR"), "HR": ("RENAULT", "TRUCK"),
+    "HD": ("DAIMLER AG", "CAR"), "HV": ("VOLVO", "TRUCK"), "HN": ("MAN", "TRUCK"),
+    "HM": ("DAIMLER AG", "TRUCK"), "HS": ("SCANIA", "TRUCK"), "HC": ("PORSCHE", "CAR"),
+    "HT": ("TRAILER", "TRUCK"), "HI": ("IVECO", "TRUCK"), "HF": ("DAF", "TRUCK"),
+    "HL": ("LAND ROVER", "CAR"), "HZ": ("MISC", "TRUCK"), "JC": ("JAPANPARTS", "CAR"),
+    "HE": ("DAIMLER AG", "TRUCK"), "HY": ("JAGUAR", "CAR"), "HO": ("OPEL", "CAR"),
+    "HU": ("RENAULT", "CAR"), "HX": ("DEUTZ", "TRUCK"), "HK": ("VOLVO", "CAR"),
+    "CC": ("EQUIPMENTS", "TRUCK"), "HP": ("PEUGEOT", "CAR"), "HA": ("AMERICAN PARTS", "CAR"),
+    "HJ": ("JEEP", "CAR"), "HH": ("HINO", "TRUCK"), "JV": ("MISC", "TRUCK"),
+    "HQ": ("NISSAN UD", "TRUCK"), "HG": ("TATA", "TRUCK")
 }
 
 banned_keywords = [
@@ -54,18 +55,18 @@ banned_keywords = [
 
 banned_types = ["AAL", "AIC", "ATK", "BEL", "CLA", "EMR", "EUR", "GF", "ICE", "MRR", "OTO", "RCD", "RFG", "SAM", "ST", "TZR", "UGR"]
 
-# Streamlit UI
-st.title("Excel Processor - OEM Mapping & Filtering")
+st.title("EMEX Dump Formatter")
 
-uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+uploaded_file = st.file_uploader("Upload Dump Excel File", type=["xlsx"])
+
 if uploaded_file:
     df = pd.read_excel(uploaded_file, engine="openpyxl")
 
     # Retain only required columns
-    columns_to_keep = ["PMPDGP", "PMMANF", "PMPNO", "PMMFPT", "PMPNAM", "SOH_QTY", "LC", "R2RATE"]
-    df = df[[col for col in columns_to_keep if col in df.columns]]
+    keep_cols = ["PMPDGP", "PMMANF", "PMPNO", "PMMFPT", "PMPNAM", "SOH_QTY", "LC", "R2RATE"]
+    df = df[[col for col in keep_cols if col in df.columns]]
 
-    # Apply mappings
+    # Add mappings
     df["Comb"] = df["PMPNO"].astype(str) + df["PMMANF"].astype(str)
     df["OEM Brand"] = df["PMMANF"].map(oem_brand_map)
     df["Manufacturer No."] = df["PMMFPT"]
@@ -78,27 +79,29 @@ if uploaded_file:
     df["WEIGHT"] = ""
     df["Type"] = df["PMMANF"]
     df["Car/Truck"] = df["PMPDGP"].map(lambda x: vehicle_map.get(x, ("", ""))[1])
-    df["LC"] = df["LC"]
-    df["R2RATE"] = df["R2RATE"]
-    df["PMPDGP"] = df["PMPDGP"]
+    df = df[[
+        "Comb", "OEM Brand", "Manufacturer No.", "Unit Price in AED", "Stock", "Pack",
+        "Part Description", "Vehicle", "Original Part No.", "WEIGHT", "Type", "Car/Truck",
+        "LC", "R2RATE", "PMPDGP"
+    ]]
 
-    # Reorder columns
-    final_columns = ["Comb", "OEM Brand", "Manufacturer No.", "Unit Price in AED", "Stock", "Pack",
-                     "Part Description", "Vehicle", "Original Part No.", "WEIGHT", "Type", "Car/Truck",
-                     "LC", "R2RATE", "PMPDGP"]
-    df = df[final_columns]
+    # Replace "ORIGINAL GENUINE" with Vehicle
+    df["OEM Brand"] = df.apply(lambda row: row["Vehicle"] if row["OEM Brand"] == "ORIGINAL GENUINE" else row["OEM Brand"], axis=1)
 
-    # Filtering logic
-    df = df[~df.apply(lambda row: row.astype(str).str.lower().str.contains('|'.join([kw.lower() for kw in banned_keywords])).any(), axis=1)]
+    # Remove rows with banned keywords in any cell (case-insensitive, partial match)
+    def contains_banned(cell):
+        return any(bad.lower() in str(cell).lower() for bad in banned_keywords)
+
+    df = df[~df.applymap(contains_banned).any(axis=1)]
+
+    # Remove rows where Type contains banned types
     df = df[~df["Type"].isin(banned_types)]
-    df = df[~df["PMPDGP"].str.contains("VW", na=False)]
 
-    # Replace "ORIGINAL GENUINE" with Vehicle value
-    df.loc[df["OEM Brand"] == "ORIGINAL GENUINE", "OEM Brand"] = df["Vehicle"]
+    # Remove rows where PMPDGP contains "VW"
+    df = df[~df["PMPDGP"].astype(str).str.contains("VW", case=False, na=False)]
 
-    # Save processed file
+    # Save to Excel
     df.to_excel("Stock list.xlsx", index=False)
-
-    st.success("File processed successfully. Download below:")
+    st.success("File processed successfully.")
     with open("Stock list.xlsx", "rb") as f:
-        st.download_button("Download Processed File", f, file_name="Stock list.xlsx")
+        st.download_button("Download Cleaned File", f, file_name="Stock list.xlsx")
